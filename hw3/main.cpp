@@ -21,31 +21,71 @@
  *  This example program has been updated to use the RPC implementation in the new mbed libraries.
  *  This example demonstrates using RPC over serial
 **/
-RpcDigitalOut myled1(LED1,"myled1");
-RpcDigitalOut myled2(LED2,"myled2");
-RpcDigitalOut myled3(LED3,"myled3");
+//RpcDigitalOut myled1(LED1,"myled1");
+//RpcDigitalOut myled2(LED2,"myled2");
+//RpcDigitalOut myled3(LED3,"myled3");
+DigitalOut myled1(LED1);
 BufferedSerial pc(USBTX, USBRX);
-//uLCD_4DGL uLCD(D1, D0, D2);
+uLCD_4DGL uLCD(D1, D0, D2);
 InterruptIn but(USER_BUTTON);
+
+void print_angle();
 
 void Gesture_UI(Arguments *in, Reply *out);
 RPCFunction rpcGesture_UI(&Gesture_UI, "Gesture_UI");
+void ANGLE_SEL();
 int gesture_ui();
 
 void Angle_Detection(Arguments *in, Reply *out);
 RPCFunction rpcAngle_Detection(&Angle_Detection, "Angle_Detection");
 
 EventQueue gesture_queue(32 * EVENTS_EVENT_SIZE);
+EventQueue gesture_queue1(32 * EVENTS_EVENT_SIZE);
 EventQueue angle_detection_queue(32 * EVENTS_EVENT_SIZE);
+EventQueue angle_detection_queue1(32 * EVENTS_EVENT_SIZE);
 EventQueue queue(32 * EVENTS_EVENT_SIZE);                               // for uLCD display
 Thread gesture_thread;
+Thread gesture_thread1;
 Thread angle_detection_thread;
+Thread angle_detection_thread1;
 Thread thread;                                                          // for uLCD display
 
 // for Accelerometer
 // int16_t pDataXYZ[3] = {0};
 // int idR[32] = {0};
 // int indexR = 0;
+
+// for Gesture_UI mode
+int angle = 15;
+int angle_sel = 15;
+
+
+// for display on uLCD
+void print_angle() {
+    //uLCD.cls();
+    uLCD.color(BLACK);
+    uLCD.locate(1, 2);
+    uLCD.printf("\n15\n");    
+    uLCD.locate(1, 4);
+    uLCD.printf("\n45\n");
+    uLCD.locate(1, 6);
+    uLCD.printf("\n60\n");
+    
+
+    if (angle==15) {
+        uLCD.color(RED);
+        uLCD.locate(1, 2);
+        uLCD.printf("\n15\n");
+    } else if (angle==45) {
+        uLCD.color(RED);
+        uLCD.locate(1, 4);
+        uLCD.printf("\n45\n");
+    } else if (angle==60) {
+        uLCD.color(RED);
+        uLCD.locate(1, 6);
+        uLCD.printf("\n60\n");
+    } 
+}
 
 
 /*BELOW: Machine Learning on mbed*/
@@ -110,9 +150,22 @@ int PredictGesture(float* output) {
 
 
 void Gesture_UI(Arguments *in, Reply *out) {
+    for (int i=0; i<5; i++) {
+        myled1 = 1;                            // use LED1 to indicate the start of UI mode
+        ThisThread::sleep_for(100ms);
+        myled1 = 0;
+        ThisThread::sleep_for(100ms);
+    }
     gesture_queue.call(gesture_ui);
     gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
 }
+
+void ANGLE_SEL() {
+    angle_sel = angle;
+    printf("angle_sel = %d\r\n", angle_sel);
+
+} 
+
 
 
 // main function in lab08
@@ -127,7 +180,8 @@ int gesture_ui() {
 
     // The gesture index of the prediction
     int gesture_index;
-    int angle_sel;
+    // int angle = 15;
+    // int angle_sel = 15;
 
     // Set up logging.
     static tflite::MicroErrorReporter micro_error_reporter;
@@ -223,9 +277,21 @@ int gesture_ui() {
             error_reporter->Report(config.output_message[gesture_index]);
         }
 
-        if (gesture_index == 0) angle_sel = 15;
-        else if (gesture_index == 1) angle_sel = 45;
-        else if (gesture_index == 2) angle_sel = 60;
+        if (gesture_index == 0) {
+            angle = 15;
+            queue.call(print_angle);
+        }
+        else if (gesture_index == 1) {
+            angle = 45;
+            queue.call(print_angle);
+        }
+        else if (gesture_index == 2) {
+            angle = 60;
+            queue.call(print_angle);
+        }
+        //printf("%d\r\n", angle_sel);
+        but.rise(gesture_queue1.event(ANGLE_SEL));
+        //but.rise(&);
         
 
 
@@ -250,8 +316,24 @@ void Angle_Detection(Arguments *in, Reply *out) {
 //double x, y;
 
 int main() {
+    // display on uLCD
+    uLCD.background_color(WHITE);               
+    uLCD.cls();
+    uLCD.textbackground_color(WHITE);
+    uLCD.color(RED);
+    uLCD.locate(1, 2);
+    uLCD.printf("\n15\n");
+    uLCD.color(BLACK);
+    uLCD.locate(1, 4);
+    uLCD.printf("\n45\n");
+    uLCD.locate(1, 6);
+    uLCD.printf("\n60\n");
+
+
+
+
     thread.start(callback(&queue, &EventQueue::dispatch_forever));
-    //gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
+    gesture_thread1.start(callback(&gesture_queue1, &EventQueue::dispatch_forever));
     
     //The mbed RPC classes are now wrapped to create an RPC enabled version - see RpcClasses.h so don't add to base class
     // receive commands, and send back the responses
@@ -300,51 +382,3 @@ int main() {
 
 
 
-
-
-
-
-
-//demo
-// void LEDControl_GREEN (Arguments *in, Reply *out)   {
-//     bool success = true;
-
-//     // In this scenario, when using RPC delimit the two arguments with a space.
-//     //x = in->getArg<double>();
-//     y = in->getArg<double>();
-
-//     // Have code here to call another RPC function to wake up specific led or close it.
-//     char buffer[200], outbuf[256];
-//     char strings[20];
-//     //int led = x;
-//     int on = y;
-//     sprintf(strings, "/myled/write %d", on);
-//     strcpy(buffer, strings);
-//     RPC::call(buffer, outbuf);
-//     if (success) {
-//         out->putData(buffer);
-//     } else {
-//         out->putData("Failed to execute LED control.");
-//     }
-// }
-
-
-// void BLINK(Arguments *in, Reply *out)   {
-//     bool success = true;
-
-//     // In this scenario, when using RPC delimit the two arguments with a space.
-//     //x = in->getArg<double>();
-//     //y = in->getArg<double>();
-
-//     // Have code here to call another RPC function to wake up specific led or close it.
-//     char buffer[200], outbuf[256];
-//     char strings[20];
-//     //int led = x;
-//     while(1) {
-//         RPC::call("/myled3/write 1", outbuf);
-//         ThisThread::sleep_for(500ms);
-//         RPC::call("/myled3/write 0", outbuf);
-//         ThisThrexad::sleep_for(500ms);
-//     }
-    
-// }

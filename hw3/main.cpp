@@ -17,6 +17,12 @@
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
 
+
+// for MQTT
+#include "MQTTNetwork.h"
+#include "MQTTmbed.h"
+#include "MQTTClient.h"
+
 /**
  *  This example program has been updated to use the RPC implementation in the new mbed libraries.
  *  This example demonstrates using RPC over serial
@@ -27,7 +33,7 @@
 DigitalOut myled1(LED1);
 BufferedSerial pc(USBTX, USBRX);
 uLCD_4DGL uLCD(D1, D0, D2);
-InterruptIn but(USER_BUTTON);
+InterruptIn btn(USER_BUTTON);
 
 void print_angle();
 
@@ -39,53 +45,90 @@ int gesture_ui();
 void Angle_Detection(Arguments *in, Reply *out);
 RPCFunction rpcAngle_Detection(&Angle_Detection, "Angle_Detection");
 
+void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client);
+
 EventQueue gesture_queue(32 * EVENTS_EVENT_SIZE);
-EventQueue gesture_queue1(32 * EVENTS_EVENT_SIZE);
+//EventQueue gesture_queue1(32 * EVENTS_EVENT_SIZE);
 EventQueue angle_detection_queue(32 * EVENTS_EVENT_SIZE);
-EventQueue angle_detection_queue1(32 * EVENTS_EVENT_SIZE);
+//EventQueue angle_detection_queue1(32 * EVENTS_EVENT_SIZE);
 EventQueue queue(32 * EVENTS_EVENT_SIZE);                               // for uLCD display
 Thread gesture_thread;
-Thread gesture_thread1;
+//Thread gesture_thread1;
 Thread angle_detection_thread;
-Thread angle_detection_thread1;
+//Thread angle_detection_thread1;
 Thread thread;                                                          // for uLCD display
+// for MQTT
+Thread mqtt_thread(osPriorityHigh);
+EventQueue mqtt_queue;
 
 // for Accelerometer
 // int16_t pDataXYZ[3] = {0};
 // int idR[32] = {0};
 // int indexR = 0;
 
+// for MQTT
+// GLOBAL VARIABLES
+WiFiInterface *wifi;
+volatile int message_num = 0;
+volatile int arrivedcount = 0;
+volatile bool closed = false;
+
+// NetworkInterface* net = wifi;
+// MQTTNetwork mqttNetwork(net);
+// MQTT::Client<MQTTNetwork, Countdown> client(mqttNetwork);
+
+const char* topic = "Mbed";
+
 // for Gesture_UI mode
 int angle = 15;
 int angle_sel = 15;
 
-
-// for display on uLCD
-void print_angle() {
-    //uLCD.cls();
-    uLCD.color(BLACK);
-    uLCD.locate(1, 2);
-    uLCD.printf("\n15\n");    
-    uLCD.locate(1, 4);
-    uLCD.printf("\n45\n");
-    uLCD.locate(1, 6);
-    uLCD.printf("\n60\n");
-    
-
-    if (angle==15) {
-        uLCD.color(RED);
-        uLCD.locate(1, 2);
-        uLCD.printf("\n15\n");
-    } else if (angle==45) {
-        uLCD.color(RED);
-        uLCD.locate(1, 4);
-        uLCD.printf("\n45\n");
-    } else if (angle==60) {
-        uLCD.color(RED);
-        uLCD.locate(1, 6);
-        uLCD.printf("\n60\n");
-    } 
+/*BELOW: MQTT function*/
+/*************************************************************************************/
+/*************************************************************************************/
+void messageArrived(MQTT::MessageData& md) {
+    MQTT::Message &message = md.message;
+    char msg[300];
+    sprintf(msg, "Message arrived: QoS%d, retained %d, dup %d, packetID %d\r\n", message.qos, message.retained, message.dup, message.id);
+    printf(msg);
+    ThisThread::sleep_for(1000ms);
+    char payload[300];
+    sprintf(payload, "Payload %.*s\r\n", message.payloadlen, (char*)message.payload);
+    printf(payload);
+    ++arrivedcount;
 }
+
+void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
+
+    angle_sel = angle;
+    printf("angle_sel = %d\r\n", angle_sel);
+
+    message_num++;
+    MQTT::Message message;
+    char buff[100];
+    
+    sprintf(buff, "Angle Selected: %d", angle_sel);
+    
+    message.qos = MQTT::QOS0;
+    message.retained = false;
+    message.dup = false;
+    message.payload = (void*) buff;
+    message.payloadlen = strlen(buff) + 1;
+    int rc = client->publish(topic, message);
+
+    printf("rc:  %d\r\n", rc);
+    printf("Puslish message: %s\r\n", buff);
+}
+
+void close_mqtt() {
+    closed = true;
+}
+/*************************************************************************************/
+/*************************************************************************************/
+/*Above: MQTT function*/
+
+
+
 
 
 /*BELOW: Machine Learning on mbed*/
@@ -141,12 +184,32 @@ int PredictGesture(float* output) {
 /*Above: Machine Learning on mbed*/
 
 
+// for display on uLCD
+void print_angle() {
+    //uLCD.cls();
+    uLCD.color(BLACK);
+    uLCD.locate(1, 2);
+    uLCD.printf("\n15\n");    
+    uLCD.locate(1, 4);
+    uLCD.printf("\n45\n");
+    uLCD.locate(1, 6);
+    uLCD.printf("\n60\n");
+    
 
-
-
-
-
-
+    if (angle==15) {
+        uLCD.color(RED);
+        uLCD.locate(1, 2);
+        uLCD.printf("\n15\n");
+    } else if (angle==45) {
+        uLCD.color(RED);
+        uLCD.locate(1, 4);
+        uLCD.printf("\n45\n");
+    } else if (angle==60) {
+        uLCD.color(RED);
+        uLCD.locate(1, 6);
+        uLCD.printf("\n60\n");
+    } 
+}
 
 
 void Gesture_UI(Arguments *in, Reply *out) {
@@ -160,11 +223,11 @@ void Gesture_UI(Arguments *in, Reply *out) {
     gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
 }
 
-void ANGLE_SEL() {
-    angle_sel = angle;
-    printf("angle_sel = %d\r\n", angle_sel);
+// void ANGLE_SEL() {
+//     angle_sel = angle;
+//     printf("angle_sel = %d\r\n", angle_sel);
 
-} 
+// } 
 
 
 
@@ -183,6 +246,11 @@ int gesture_ui() {
     // int angle = 15;
     // int angle_sel = 15;
 
+
+
+/*BELOW: Machine Learning on mbed*/
+/*************************************************************************************/
+/*************************************************************************************/
     // Set up logging.
     static tflite::MicroErrorReporter micro_error_reporter;
     tflite::ErrorReporter* error_reporter = &micro_error_reporter;
@@ -290,9 +358,11 @@ int gesture_ui() {
             queue.call(print_angle);
         }
         //printf("%d\r\n", angle_sel);
-        but.rise(gesture_queue1.event(ANGLE_SEL));
-        //but.rise(&);
-        
+        //btn.rise(mqtt_queue.event(&publish_message, &client));
+        //btn.rise(&);
+/*************************************************************************************/
+/*************************************************************************************/
+/*Above: Machine Learning on mbed*/
 
 
 
@@ -330,11 +400,68 @@ int main() {
     uLCD.printf("\n60\n");
 
 
-
-
     thread.start(callback(&queue, &EventQueue::dispatch_forever));
-    gesture_thread1.start(callback(&gesture_queue1, &EventQueue::dispatch_forever));
+    mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
+    //gesture_thread1.start(callback(&gesture_queue1, &EventQueue::dispatch_forever));
+
+
+    /*BELOW: MQTT*/
+    /*************************************************************************************/
+    /*************************************************************************************/
+    wifi = WiFiInterface::get_default_instance();
+    if (!wifi) {
+            printf("ERROR: No WiFiInterface found.\r\n");
+            return -1;
+    }
+
+    printf("\nConnecting to %s...\r\n", MBED_CONF_APP_WIFI_SSID);
+    int ret = wifi->connect(MBED_CONF_APP_WIFI_SSID, MBED_CONF_APP_WIFI_PASSWORD, NSAPI_SECURITY_WPA_WPA2);
+    if (ret != 0) {
+            printf("\nConnection error: %d\r\n", ret);
+            return -1;
+    }
     
+    NetworkInterface* net = wifi;
+    MQTTNetwork mqttNetwork(net);
+    MQTT::Client<MQTTNetwork, Countdown> client(mqttNetwork);
+
+
+    //TODO: revise host to your IP
+    const char* host = "172.20.10.2";
+    printf("Connecting to TCP network...\r\n");
+
+    SocketAddress sockAddr;
+    sockAddr.set_ip_address(host);
+    sockAddr.set_port(1883);
+
+    printf("address is %s/%d\r\n", (sockAddr.get_ip_address() ? sockAddr.get_ip_address() : "None"),  (sockAddr.get_port() ? sockAddr.get_port() : 0) ); //check setting
+
+    int rc = mqttNetwork.connect(sockAddr);//(host, 1883);
+    if (rc != 0) {
+            printf("Connection error.");
+            return -1;
+    }
+    printf("Successfully connected!\r\n");
+
+    MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+    data.MQTTVersion = 3;
+    data.clientID.cstring = "Mbed";
+
+    if ((rc = client.connect(data)) != 0){
+            printf("Fail to connect MQTT\r\n");
+    }
+    if (client.subscribe(topic, MQTT::QOS0, messageArrived) != 0){
+            printf("Fail to subscribe\r\n");
+    }
+
+    
+    /*************************************************************************************/
+    /*************************************************************************************/
+    /*Above: MQTT*/
+
+    btn.rise(mqtt_queue.event(&publish_message, &client));
+
+
     //The mbed RPC classes are now wrapped to create an RPC enabled version - see RpcClasses.h so don't add to base class
     // receive commands, and send back the responses
     char buf[256], outbuf[256];
@@ -356,6 +483,38 @@ int main() {
         RPC::call(buf, outbuf);
         printf("%s\r\n", outbuf);
     }
+
+
+
+
+
+    
+
+    int num = 0;
+    while (num != 5) {
+            client.yield(100);
+            ++num;
+    }
+
+    while (1) {
+            if (closed) break;
+            client.yield(500);
+            ThisThread::sleep_for(500ms);
+    }
+
+    printf("Ready to close MQTT Network......\n");
+
+    if ((rc = client.unsubscribe(topic)) != 0) {
+            printf("Failed: rc from unsubscribe was %d\n", rc);
+    }
+    if ((rc = client.disconnect()) != 0) {
+    printf("Failed: rc from disconnect was %d\n", rc);
+    }
+
+    mqttNetwork.disconnect();
+    printf("Successfully closed!\n");
+    
+    
 }
 
 

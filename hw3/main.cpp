@@ -40,7 +40,7 @@ void print_angle();
 void Gesture_UI(Arguments *in, Reply *out);
 RPCFunction rpcGesture_UI(&Gesture_UI, "Gesture_UI");
 void ANGLE_SEL();
-int gesture_ui();
+void gesture_ui();
 
 void Angle_Detection(Arguments *in, Reply *out);
 RPCFunction rpcAngle_Detection(&Angle_Detection, "Angle_Detection");
@@ -89,6 +89,8 @@ int mode = 0;
 // for Gesture_UI mode
 int angle = 15;
 int angle_sel = 15;
+
+
 
 /*BELOW: MQTT function*/
 /*************************************************************************************/
@@ -222,17 +224,34 @@ void print_angle() {
 
 
 void Gesture_UI(Arguments *in, Reply *out) {
+    mode = 1;
+    gesture_queue.call(gesture_ui);
+    //gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
+}
+
+void gesture_ui() {
     for (int i=0; i<5; i++) {
         myled1 = 1;                            // use LED1 to indicate the start of UI mode
         ThisThread::sleep_for(100ms);
         myled1 = 0;
         ThisThread::sleep_for(100ms);
     }
-    mode = 1;
-
-    //gesture_queue.call(gesture_ui);
-    //gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
 }
+
+// By this way, we even don't need a thread and the void gesture_ui() function
+// Is the gesture_thread necessarily?
+/*
+void Gesture_UI(Arguments *in, Reply *out) {
+    mode = 1;
+    for (int i=0; i<5; i++) {
+        myled1 = 1;                            // use LED1 to indicate the start of UI mode
+        ThisThread::sleep_for(100ms);
+        myled1 = 0;
+        ThisThread::sleep_for(100ms);
+    }
+}
+
+*/
 
 // void ANGLE_SEL() {
 //     angle_sel = angle;
@@ -242,10 +261,8 @@ void Gesture_UI(Arguments *in, Reply *out) {
 
 
 
-// main function in lab08
-int gesture_ui() {
 
-}
+
 
 
 void Angle_Detection(Arguments *in, Reply *out) {
@@ -278,9 +295,9 @@ int main() {
     uLCD.printf("\n60\n");
 
 
-    thread.start(callback(&queue, &EventQueue::dispatch_forever));
+    thread.start(callback(&queue, &EventQueue::dispatch_forever));                          // for output on uLCD
     mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
-    //gesture_thread1.start(callback(&gesture_queue1, &EventQueue::dispatch_forever));
+    gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
 
 
     /*BELOW: MQTT*/

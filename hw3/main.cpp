@@ -39,8 +39,10 @@ void print_angle();
 
 void Gesture_UI(Arguments *in, Reply *out);
 RPCFunction rpcGesture_UI(&Gesture_UI, "Gesture_UI");
-void ANGLE_SEL();
+//void ANGLE_SEL();
 void gesture_ui();
+//void C_Gesture_UI(Arguments *in, Reply *out);
+//RPCFunction rpcC_Gesture_UI(&C_Gesture_UI, "C_Gesture_UI");
 
 void Angle_Detection(Arguments *in, Reply *out);
 RPCFunction rpcAngle_Detection(&Angle_Detection, "Angle_Detection");
@@ -81,7 +83,7 @@ const char* topic = "Mbed";
 
 // mode track
 int mode = 0;
-// mode 0: RPC loop
+// mode 0: nothing
 // mode 1: Gesture_UI 
 // mode 2: Angle_Detection
 
@@ -90,6 +92,7 @@ int mode = 0;
 int angle = 15;
 int angle_sel = 15;
 
+int set_confirm = 1;
 
 
 /*BELOW: MQTT function*/
@@ -109,7 +112,9 @@ void messageArrived(MQTT::MessageData& md) {
 
 void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
 
-    mode = 0;
+    //mode = 0;
+    set_confirm = 0;
+    
 
     angle_sel = angle;
     printf("angle_sel = %d\r\n", angle_sel);
@@ -131,9 +136,9 @@ void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
     printf("Puslish message: %s\r\n", buff);
 }
 
-void close_mqtt() {
-    closed = true;
-}
+// void close_mqtt() {
+//     closed = true;
+// }
 /*************************************************************************************/
 /*************************************************************************************/
 /*Above: MQTT function*/
@@ -183,8 +188,8 @@ int PredictGesture(float* output) {
   if (continuous_count < config.consecutiveInferenceThresholds[this_predict]) {
     return label_num;
   }
-  // Otherwise, we've seen a positive result, so clear all our variables
-  // and report it
+  // Otherwise, we'vmode = 0
+
   continuous_count = 0;
   last_predict = -1;
 
@@ -222,20 +227,156 @@ void print_angle() {
     } 
 }
 
+// void C_Gesture_UI(Arguments *in, Reply *out) {
+//     printf("enter C_Gesture_UI\r\n");
+//     //mode = 0;
+//     printf("mode = %d\r\n", mode);
+//     //gesture_queue.cancel(id);
+// }
+
 
 void Gesture_UI(Arguments *in, Reply *out) {
-    mode = 1;
-    gesture_queue.call(gesture_ui);
-    //gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
-}
-
-void gesture_ui() {
+    //mode = 1;
     for (int i=0; i<5; i++) {
         myled1 = 1;                            // use LED1 to indicate the start of UI mode
         ThisThread::sleep_for(100ms);
         myled1 = 0;
         ThisThread::sleep_for(100ms);
     }
+    //id = gesture_queue.call(gesture_ui);
+    gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
+    gesture_queue.call(gesture_ui);
+}
+
+void gesture_ui() {
+    mode = 1;
+    /*BELOW: Machine Learning on mbed*/
+    /*************************************************************************************/
+    /*************************************************************************************/
+    
+    // Whether we should clear the buffer next time we fetch data
+    bool should_clear_buffer = false;
+    bool got_data = false;
+    // The gesture index of the prediction
+    int gesture_index;
+
+    // Set up logging.
+    static tflite::MicroErrorReporter micro_error_reporter;
+    tflite::ErrorReporter* error_reporter = &micro_error_reporter;
+
+    // Map the model into a usable data structure. This doesn't involve any
+    // copying or parsing, it's a very lightweight operation.
+    const tflite::Model* model = tflite::GetModel(g_magic_wand_model_data);
+    if (model->version() != TFLITE_SCHEMA_VERSION) {
+        error_reporter->Report(
+            "Model provided is schema version %d not equal to supported version %d.", model->version(), TFLITE_SCHEMA_VERSION);
+    //return -1;
+    }
+
+    // Pull in only the operation implementations we need.
+    // This relies on a complete list of all the ops needed by this graph.
+    // An easier approach is to just use the AllOpsResolver, but this will
+    // incur some penalty in code space for op implementations that are not
+    // needed by this graph.
+    static tflite::MicroOpResolver<6> micro_op_resolver;
+    micro_op_resolver.AddBuiltin(
+        tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
+        tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
+    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_MAX_POOL_2D,
+                                 tflite::ops::micro::Register_MAX_POOL_2D());
+    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_CONV_2D,
+                                 tflite::ops::micro::Register_CONV_2D());
+    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
+                                 tflite::ops::micro::Register_FULLY_CONNECTED());
+    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_SOFTMAX,
+                                 tflite::ops::micro::Register_SOFTMAX());
+    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_RESHAPE,
+                                 tflite::ops::micro::Register_RESHAPE(), 1);
+
+    // Build an interpreter to run the model with
+    static tflite::MicroInterpreter static_interpreter(
+        model, micro_op_resolver, tensor_arena, kTensorArenaSize, error_reporter);
+    tflite::MicroInterpreter* interpreter = &static_interpreter;
+
+    // Allocate memory from the tensor_arena for the model's tensors
+    interpreter->AllocateTensors();
+
+    // Obtain pointer to the model's input tensor
+    TfLiteTensor* model_input = interpreter->input(0);
+    if ((model_input->dims->size != 4) || (model_input->dims->data[0] != 1) ||
+        (model_input->dims->data[1] != config.seq_length) ||
+        (model_input->dims->data[2] != kChannelNumber) ||
+        (model_input->type != kTfLiteFloat32)) {
+        error_reporter->Report("Bad input tensor parameters in model");
+        //return -1;
+    }
+
+    int input_length = model_input->bytes / sizeof(float);
+
+    TfLiteStatus setup_status = SetupAccelerometer(error_reporter);
+    if (setup_status != kTfLiteOk) {
+        error_reporter->Report("Set up failed\n");
+        //return -1;
+    }
+
+    error_reporter->Report("Set up successful...\n");
+    /*************************************************************************************/
+    /*************************************************************************************/
+    /*Above: Machine Learning on mbed*/
+
+    //printf("outof loop\r\n");
+    //printf("mode=%d mode==1?  %d\r\n", mode, mode==1);
+    // mode 1: Gesture_UI
+    while (set_confirm) {
+        
+        //printf("mode=%d  mode==1?  %d\r\n",mode ,mode==1);
+
+        // Attempt to read new data from the accelerometer
+        got_data = ReadAccelerometer(error_reporter, model_input->data.f,
+                                    input_length, should_clear_buffer);
+
+        // If there was no new data,
+        // don't try to clear the buffer again and wait until next time
+        if (!got_data) {
+            should_clear_buffer = false;
+            continue;
+        }
+
+        // Run inference, and report any error
+        TfLiteStatus invoke_status = interpreter->Invoke();
+        if (invoke_status != kTfLiteOk) {
+            error_reporter->Report("Invoke failed on index: %d\n", begin_index);
+            continue;
+        }
+
+        // Analyze the results to obtain a prediction
+        gesture_index = PredictGesture(interpreter->output(0)->data.f);
+
+        // Clear the buffer next time we read data
+        should_clear_buffer = gesture_index < label_num;
+
+        // Produce an output
+        if (gesture_index < label_num) {
+            error_reporter->Report(config.output_message[gesture_index]);
+            if (gesture_index == 0) {
+            angle = 15;
+            queue.call(print_angle);
+            }
+            else if (gesture_index == 1) {
+                angle = 45;
+                queue.call(print_angle);
+            }
+            else if (gesture_index == 2) {
+                angle = 60;
+                queue.call(print_angle);
+            }
+
+        }
+
+        
+        //printf("mode = %d\r\n", mode);
+    }
+    //printf("outof loop1\r\n");
 }
 
 // By this way, we even don't need a thread and the void gesture_ui() function
@@ -293,12 +434,13 @@ int main() {
     uLCD.printf("\n45\n");
     uLCD.locate(1, 6);
     uLCD.printf("\n60\n");
-
+    BSP_ACCELERO_Init();
 
     thread.start(callback(&queue, &EventQueue::dispatch_forever));                          // for output on uLCD
     mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
-    gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
+    //gesture_thread.start(callback(&  gesture_queue, &EventQueue::dispatch_forever));
 
+    
 
     /*BELOW: MQTT*/
     /*************************************************************************************/
@@ -306,14 +448,14 @@ int main() {
     wifi = WiFiInterface::get_default_instance();
     if (!wifi) {
             printf("ERROR: No WiFiInterface found.\r\n");
-            return -1;
+            //return -1;
     }
 
     printf("\nConnecting to %s...\r\n", MBED_CONF_APP_WIFI_SSID);
     int ret = wifi->connect(MBED_CONF_APP_WIFI_SSID, MBED_CONF_APP_WIFI_PASSWORD, NSAPI_SECURITY_WPA_WPA2);
     if (ret != 0) {
             printf("\nConnection error: %d\r\n", ret);
-            return -1;
+            //return -1;
     }
     
     NetworkInterface* net = wifi;
@@ -334,7 +476,7 @@ int main() {
     int rc = mqttNetwork.connect(sockAddr);//(host, 1883);
     if (rc != 0) {
             printf("Connection error.");
-            return -1;
+            //return -1;
     }
     printf("Successfully connected!\r\n");
 
@@ -352,95 +494,7 @@ int main() {
     /*************************************************************************************/
     /*Above: MQTT*/
 
-
-
-    /*BELOW: Machine Learning on mbed*/
-    /*************************************************************************************/
-    /*************************************************************************************/
-            
-    // Whether we should clear the buffer next time we fetch data
-    bool should_clear_buffer = false;
-    bool got_data = false;
-
-    // The gesture index of the prediction
-    int gesture_index;
-
-    // Set up logging.
-    static tflite::MicroErrorReporter micro_error_reporter;
-    tflite::ErrorReporter* error_reporter = &micro_error_reporter;
-
-    // Map the model into a usable data structure. This doesn't involve any
-    // copying or parsing, it's a very lightweight operation.
-    const tflite::Model* model = tflite::GetModel(g_magic_wand_model_data);
-    if (model->version() != TFLITE_SCHEMA_VERSION) {
-        error_reporter->Report(
-            "Model provided is schema version %d not equal to supported version %d.", model->version(), TFLITE_SCHEMA_VERSION);
-    return -1;
-    }
-
-    // Pull in only the operation implementations we need.
-    // This relies on a complete list of all the ops needed by this graph.
-    // An easier approach is to just use the AllOpsResolver, but this will
-    // incur some penalty in code space for op implementations that are not
-    // needed by this graph.
-    static tflite::MicroOpResolver<6> micro_op_resolver;
-    micro_op_resolver.AddBuiltin(
-        tflite::BuiltinOperator_DEPTHWISE_CONV_2D,
-        tflite::ops::micro::Register_DEPTHWISE_CONV_2D());
-    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_MAX_POOL_2D,
-                                 tflite::ops::micro::Register_MAX_POOL_2D());
-    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_CONV_2D,
-                                 tflite::ops::micro::Register_CONV_2D());
-    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_FULLY_CONNECTED,
-                                 tflite::ops::micro::Register_FULLY_CONNECTED());
-    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_SOFTMAX,
-                                 tflite::ops::micro::Register_SOFTMAX());
-    micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_RESHAPE,
-                                 tflite::ops::micro::Register_RESHAPE(), 1);
-
-    // Build an interpreter to run the model with
-    static tflite::MicroInterpreter static_interpreter(
-        model, micro_op_resolver, tensor_arena, kTensorArenaSize, error_reporter);
-    tflite::MicroInterpreter* interpreter = &static_interpreter;
-
-    // Allocate memory from the tensor_arena for the model's tensors
-    interpreter->AllocateTensors();
-
-    // Obtain pointer to the model's input tensor
-    TfLiteTensor* model_input = interpreter->input(0);
-    if ((model_input->dims->size != 4) || (model_input->dims->data[0] != 1) ||
-        (model_input->dims->data[1] != config.seq_length) ||
-        (model_input->dims->data[2] != kChannelNumber) ||
-        (model_input->type != kTfLiteFloat32)) {
-        error_reporter->Report("Bad input tensor parameters in model");
-        return -1;
-    }
-
-    int input_length = model_input->bytes / sizeof(float);
-
-    TfLiteStatus setup_status = SetupAccelerometer(error_reporter);
-    if (setup_status != kTfLiteOk) {
-        error_reporter->Report("Set up failed\n");
-        return -1;
-    }
-
-    error_reporter->Report("Set up successful...\n");
-    /*************************************************************************************/
-    /*************************************************************************************/
-    /*Above: Machine Learning on mbed*/
-
-
-
-  
-
-
-
-
-
-
-
-
-
+    btn.rise(mqtt_queue.event(&publish_message, &client));
 
     
     //The mbed RPC classes are now wrapped to create an RPC enabled version - see RpcClasses.h so don't add to base class
@@ -449,76 +503,20 @@ int main() {
 
     FILE *devin = fdopen(&pc, "r");
     FILE *devout = fdopen(&pc, "w");
-   
     
-    btn.rise(mqtt_queue.event(&publish_message, &client));
-
-    while (true) {
-
-//printf("mode = %d\r\n", mode);
-
-        // mode 0: RPC loop
-        while (mode == 0) {
-            memset(buf, 0, 256);
-            for (int i = 0; ; i++) {
-                char recv = fgetc(devin);
-                if (recv == '\n') {
-                    printf("\r\n");
-                    break;
-                }
-                buf[i] = fputc(recv, devout);
+     while(1) {
+        memset(buf, 0, 256);
+        for (int i = 0; ; i++) {
+            char recv = fgetc(devin);
+            if (recv == '\n') {
+                printf("\r\n");
+                break;
             }
-            //Call the static call method on the RPC class
-            RPC::call(buf, outbuf);
-            printf("%s\r\n", outbuf);
+            buf[i] = fputc(recv, devout);
         }
-
-        // mode 1: Gesture_UI
-        while (mode == 1) {
-
-            // Attempt to read new data from the accelerometer
-            got_data = ReadAccelerometer(error_reporter, model_input->data.f,
-                                        input_length, should_clear_buffer);
-
-            // If there was no new data,
-            // don't try to clear the buffer again and wait until next time
-            if (!got_data) {
-                should_clear_buffer = false;
-                continue;
-            }
-
-            // Run inference, and report any error
-            TfLiteStatus invoke_status = interpreter->Invoke();
-            if (invoke_status != kTfLiteOk) {
-                error_reporter->Report("Invoke failed on index: %d\n", begin_index);
-                continue;
-            }
-
-            // Analyze the results to obtain a prediction
-            gesture_index = PredictGesture(interpreter->output(0)->data.f);
-
-            // Clear the buffer next time we read data
-            should_clear_buffer = gesture_index < label_num;
-
-            // Produce an output
-            if (gesture_index < label_num) {
-                error_reporter->Report(config.output_message[gesture_index]);
-            }
-
-            if (gesture_index == 0) {
-                angle = 15;
-                queue.call(print_angle);
-            }
-            else if (gesture_index == 1) {
-                angle = 45;
-                queue.call(print_angle);
-            }
-            else if (gesture_index == 2) {
-                angle = 60;
-                queue.call(print_angle);
-            }
-        }
-
+        //Call the static call method on the RPC class
+        RPC::call(buf, outbuf);
+        printf("%s\r\n", outbuf);
     }
 
 

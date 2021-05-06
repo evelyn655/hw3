@@ -39,25 +39,21 @@ void print_angle();
 
 void Gesture_UI(Arguments *in, Reply *out);
 RPCFunction rpcGesture_UI(&Gesture_UI, "Gesture_UI");
-//void ANGLE_SEL();
 void gesture_ui();
-//void C_Gesture_UI(Arguments *in, Reply *out);
-//RPCFunction rpcC_Gesture_UI(&C_Gesture_UI, "C_Gesture_UI");
+
+// command to close the Gesture_UI mode
+void C_Gesture_UI(Arguments *in, Reply *out);
+RPCFunction rpcC_Gesture_UI(&C_Gesture_UI, "C_Gesture_UI");
 
 void Angle_Detection(Arguments *in, Reply *out);
 RPCFunction rpcAngle_Detection(&Angle_Detection, "Angle_Detection");
 
-//void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client);
 
 EventQueue gesture_queue(32 * EVENTS_EVENT_SIZE);
-//EventQueue gesture_queue1(32 * EVENTS_EVENT_SIZE);
 EventQueue angle_detection_queue(32 * EVENTS_EVENT_SIZE);
-//EventQueue angle_detection_queue1(32 * EVENTS_EVENT_SIZE);
 EventQueue queue(32 * EVENTS_EVENT_SIZE);                               // for uLCD display
 Thread gesture_thread;
-//Thread gesture_thread1;
 Thread angle_detection_thread;
-//Thread angle_detection_thread1;
 Thread thread;                                                          // for uLCD display
 // for MQTT
 Thread mqtt_thread(osPriorityHigh);
@@ -75,24 +71,16 @@ volatile int message_num = 0;
 volatile int arrivedcount = 0;
 volatile bool closed = false;
 
-// NetworkInterface* net = wifi;
-// MQTTNetwork mqttNetwork(net);
-// MQTT::Client<MQTTNetwork, Countdown> client(mqttNetwork);
-
 const char* topic = "Mbed";
-
-// mode track
-int mode = 0;
-// mode 0: nothing
-// mode 1: Gesture_UI 
-// mode 2: Angle_Detection
-
 
 // for Gesture_UI mode
 int angle = 15;
 int angle_sel = 15;
 
-int set_confirm = 1;
+int num = 1;
+// num 0: nothing
+// num 1: Gesture_UI mode
+
 
 
 /*BELOW: MQTT function*/
@@ -112,10 +100,8 @@ void messageArrived(MQTT::MessageData& md) {
 
 void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
 
-    //mode = 0;
-    set_confirm = 0;
+    num = 0;
     
-
     angle_sel = angle;
     printf("angle_sel = %d\r\n", angle_sel);
 
@@ -136,9 +122,9 @@ void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
     printf("Puslish message: %s\r\n", buff);
 }
 
-// void close_mqtt() {
-//     closed = true;
-// }
+void close_mqtt() {
+    closed = true;
+}
 /*************************************************************************************/
 /*************************************************************************************/
 /*Above: MQTT function*/
@@ -227,16 +213,16 @@ void print_angle() {
     } 
 }
 
-// void C_Gesture_UI(Arguments *in, Reply *out) {
-//     printf("enter C_Gesture_UI\r\n");
-//     //mode = 0;
-//     printf("mode = %d\r\n", mode);
-//     //gesture_queue.cancel(id);
-// }
+
+
+
+void C_Gesture_UI(Arguments *in, Reply *out) {
+    printf("enter C_Gesture_UI\r\n");
+    num = 0;
+}
 
 
 void Gesture_UI(Arguments *in, Reply *out) {
-    //mode = 1;
     for (int i=0; i<5; i++) {
         myled1 = 1;                            // use LED1 to indicate the start of UI mode
         ThisThread::sleep_for(100ms);
@@ -249,7 +235,7 @@ void Gesture_UI(Arguments *in, Reply *out) {
 }
 
 void gesture_ui() {
-    mode = 1;
+    num = 1;
     /*BELOW: Machine Learning on mbed*/
     /*************************************************************************************/
     /*************************************************************************************/
@@ -324,12 +310,9 @@ void gesture_ui() {
     /*************************************************************************************/
     /*Above: Machine Learning on mbed*/
 
-    //printf("outof loop\r\n");
-    //printf("mode=%d mode==1?  %d\r\n", mode, mode==1);
-    // mode 1: Gesture_UI
-    while (set_confirm) {
-        
-        //printf("mode=%d  mode==1?  %d\r\n",mode ,mode==1);
+    ;
+    // num 1: Gesture_UI mode
+    while (num) {
 
         // Attempt to read new data from the accelerometer
         got_data = ReadAccelerometer(error_reporter, model_input->data.f,
@@ -372,33 +355,8 @@ void gesture_ui() {
             }
 
         }
-
-        
-        //printf("mode = %d\r\n", mode);
-    }
-    //printf("outof loop1\r\n");
-}
-
-// By this way, we even don't need a thread and the void gesture_ui() function
-// Is the gesture_thread necessarily?
-/*
-void Gesture_UI(Arguments *in, Reply *out) {
-    mode = 1;
-    for (int i=0; i<5; i++) {
-        myled1 = 1;                            // use LED1 to indicate the start of UI mode
-        ThisThread::sleep_for(100ms);
-        myled1 = 0;
-        ThisThread::sleep_for(100ms);
     }
 }
-
-*/
-
-// void ANGLE_SEL() {
-//     angle_sel = angle;
-//     printf("angle_sel = %d\r\n", angle_sel);
-
-// } 
 
 
 
@@ -438,9 +396,7 @@ int main() {
 
     thread.start(callback(&queue, &EventQueue::dispatch_forever));                          // for output on uLCD
     mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
-    //gesture_thread.start(callback(&  gesture_queue, &EventQueue::dispatch_forever));
 
-    
 
     /*BELOW: MQTT*/
     /*************************************************************************************/
@@ -494,17 +450,18 @@ int main() {
     /*************************************************************************************/
     /*Above: MQTT*/
 
+
     btn.rise(mqtt_queue.event(&publish_message, &client));
 
-    
+
     //The mbed RPC classes are now wrapped to create an RPC enabled version - see RpcClasses.h so don't add to base class
     // receive commands, and send back the responses
     char buf[256], outbuf[256];
 
     FILE *devin = fdopen(&pc, "r");
     FILE *devout = fdopen(&pc, "w");
-    
-     while(1) {
+
+    while(1) {
         memset(buf, 0, 256);
         for (int i = 0; ; i++) {
             char recv = fgetc(devin);
@@ -543,8 +500,6 @@ int main() {
 
     mqttNetwork.disconnect();
     printf("Successfully closed!\n");
-    
-    
 }
 
 

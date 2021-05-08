@@ -37,6 +37,7 @@ uLCD_4DGL uLCD(D1, D0, D2);
 InterruptIn btn(USER_BUTTON);
 
 void print_angle();
+void print_angle_detect();
 
 void Gesture_UI(Arguments *in, Reply *out);
 RPCFunction rpcGesture_UI(&Gesture_UI, "Gesture_UI");
@@ -65,10 +66,12 @@ EventQueue mqtt_queue;
 // for MQTT
 // GLOBAL VARIABLES
 WiFiInterface *wifi;
+//WiFiInterface *wifi2;
 volatile int message_num = 0;
 volatile int arrivedcount = 0;
 volatile bool closed = false;
 
+//int ret;
 
 const char* topic1 = "Angle selection";
 const char* topic2 = "Angle detection";
@@ -88,15 +91,26 @@ int num = 0;
 /*************************************************************************************/
 /*************************************************************************************/
 void messageArrived(MQTT::MessageData& md) {
-    MQTT::Message &message = md.message;
-    char msg[300];
-    sprintf(msg, "Message arrived: QoS%d, retained %d, dup %d, packetID %d\r\n", message.qos, message.retained, message.dup, message.id);
-    printf(msg);
-    ThisThread::sleep_for(1000ms);
-    char payload[300];
-    sprintf(payload, "Payload %.*s\r\n", message.payloadlen, (char*)message.payload);
-    printf(payload);
-    ++arrivedcount;
+    // MQTT::Message &message = md.message;
+    // char msg[300];
+    // sprintf(msg, "Message arrived: QoS%d, retained %d, dup %d, packetID %d\r\n", message.qos, message.retained, message.dup, message.id);
+    // printf(msg);
+    // ThisThread::sleep_for(1000ms);
+    // char payload[300];
+    // sprintf(payload, "Payload %.*s\r\n", message.payloadlen, (char*)message.payload);
+    // printf(payload);
+    // ++arrivedcount;
+}
+void messageArrived2(MQTT::MessageData& md) {
+//     MQTT::Message &message = md.message;
+//     char msg[300];
+//     sprintf(msg, "Message arrived: QoS%d, retained %d, dup %d, packetID %d\r\n", message.qos, message.retained, message.dup, message.id);
+//     printf(msg);
+//     ThisThread::sleep_for(1000ms);
+//     char payload[300];
+//     sprintf(payload, "Payload %.*s\r\n", message.payloadlen, (char*)message.payload);
+//     printf(payload);
+//     ++arrivedcount;
 }
 
 void publish_message1(MQTT::Client<MQTTNetwork, Countdown>* client1) {
@@ -136,7 +150,7 @@ void publish_message2(MQTT::Client<MQTTNetwork, Countdown>* client2) {
 
     message_num++;
     MQTT::Message message;
-    char buff[100];
+    char buff[300];
     
     sprintf(buff, "Angle Detected: %f, which is bigger than Angle Selected: %d", angle_det, angle_sel);
     // if (num==1) {
@@ -228,7 +242,7 @@ int PredictGesture(float* output) {
 
 // for display on uLCD
 void print_angle() {
-    //uLCD.cls();
+    uLCD.cls();
     uLCD.color(BLACK);
     uLCD.locate(1, 2);
     uLCD.printf("\n15\n");    
@@ -251,6 +265,31 @@ void print_angle() {
         uLCD.locate(1, 6);
         uLCD.printf("\n60\n");
     } 
+}
+void print_angle_detect() {
+    uLCD.cls();
+    uLCD.color(BLACK);
+    uLCD.locate(1, 2);
+    uLCD.printf("\n%f degree\n", angle_det);    
+    // uLCD.locate(1, 4);
+    // uLCD.printf("\n45\n");
+    // uLCD.locate(1, 6);
+    // uLCD.printf("\n60\n");
+    
+
+    // if (angle==15) {
+    //     uLCD.color(RED);
+    //     uLCD.locate(1, 2);
+    //     uLCD.printf("\n15\n");
+    // } else if (angle==45) {
+    //     uLCD.color(RED);
+    //     uLCD.locate(1, 4);
+    //     uLCD.printf("\n45\n");
+    // } else if (angle==60) {
+    //     uLCD.color(RED);
+    //     uLCD.locate(1, 6);
+    //     uLCD.printf("\n60\n");
+    // } 
 }
 
 
@@ -417,19 +456,55 @@ void Angle_Detection(Arguments *in, Reply *out) {
 }
 
 void angle_detection() {
+    
+    
+
+
+    // wifi = WiFiInterface::get_default_instance();
+    // if (!wifi) {
+    //         printf("ERROR: No WiFiInterface found.\r\n");
+    //         //return -1;
+    // }
+
+    // printf("\nConnecting to %s...\r\n", MBED_CONF_APP_WIFI_SSID);
+    // ret = wifi->connect(MBED_CONF_APP_WIFI_SSID, MBED_CONF_APP_WIFI_PASSWORD, NSAPI_SECURITY_WPA_WPA2);
+    // if (ret != 0) {
+    //         printf("\nConnection error: %d\r\n", ret);
+    //         //return -1;
+    // }
+    
     NetworkInterface* net = wifi;
     MQTTNetwork mqttNetwork(net);
     MQTT::Client<MQTTNetwork, Countdown> client2(mqttNetwork);
+
+
+    //TODO: revise host to your IP
+    const char* host = "172.20.10.2";
+    printf("Connecting to TCP network...\r\n");
+
+    SocketAddress sockAddr;
+    sockAddr.set_ip_address(host);
+    sockAddr.set_port(1883);
+
+    printf("address is %s/%d\r\n", (sockAddr.get_ip_address() ? sockAddr.get_ip_address() : "None"),  (sockAddr.get_port() ? sockAddr.get_port() : 0) ); //check setting
+
+    int rc = mqttNetwork.connect(sockAddr);//(host, 1883);
+    if (rc != 0) {
+            printf("Connection error.");
+            //return -1;
+    }
+    printf("Successfully connected!\r\n");
+
     MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
     data.MQTTVersion = 3;
-    data.clientID.cstring = "Mbed";
-    int rc;
+    data.clientID.cstring = "Angle detection";
+
     if ((rc = client2.connect(data)) != 0){
             printf("Fail to connect MQTT\r\n");
     }
     if (client2.subscribe(topic2, MQTT::QOS0, messageArrived) != 0){
             printf("Fail to subscribe\r\n");
-    }
+    }    
 
     //for Accelerometer
     int16_t pDataXYZ_init[3] = {0};
@@ -473,6 +548,7 @@ void angle_detection() {
         rad_det = acos(cos);
         angle_det = 180.0 * rad_det/PI;
         printf("angle_det = %f\r\n", angle_det);
+        queue.call(print_angle_detect);
         // queue.call(another print function for uLCD)
 
         if (angle_det > angle_sel) {
@@ -604,9 +680,9 @@ int main() {
     if ((rc = client1.unsubscribe(topic1)) != 0) {
             printf("Failed: rc from unsubscribe was %d\n", rc);
     }
-    if ((rc = client1.unsubscribe(topic2)) != 0) {
-            printf("Failed: rc from unsubscribe was %d\n", rc);
-    }
+    // if ((rc = client2.unsubscribe(topic2)) != 0) {
+    //         printf("Failed: rc from unsubscribe was %d\n", rc);
+    // }
     if ((rc = client1.disconnect()) != 0) {
     printf("Failed: rc from disconnect was %d\n", rc);
     }

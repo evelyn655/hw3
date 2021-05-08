@@ -28,7 +28,6 @@
 
 
 
-
 DigitalOut myled1(LED1);
 DigitalOut myled2(LED2);
 DigitalOut myled3(LED3);
@@ -36,6 +35,8 @@ BufferedSerial pc(USBTX, USBRX);
 uLCD_4DGL uLCD(D1, D0, D2);
 InterruptIn btn(USER_BUTTON);
 
+
+// uLCD display
 void print_angle();
 void print_angle_detect();
 
@@ -43,48 +44,42 @@ void Gesture_UI(Arguments *in, Reply *out);
 RPCFunction rpcGesture_UI(&Gesture_UI, "Gesture_UI");
 void gesture_ui();
 
-// command to close the Gesture_UI mode
-void C_Gesture_UI(Arguments *in, Reply *out);
-RPCFunction rpcC_Gesture_UI(&C_Gesture_UI, "C_Gesture_UI");
-
 void Angle_Detection(Arguments *in, Reply *out);
 RPCFunction rpcAngle_Detection(&Angle_Detection, "Angle_Detection");
 void angle_detection();
 
+// command to close the ongoing mode
+void Leave_Mode(Arguments *in, Reply *out);
+RPCFunction rpcLeave_Mode(&Leave_Mode, "Leave_Mode");
 
 EventQueue gesture_queue(32 * EVENTS_EVENT_SIZE);
-EventQueue angle_detection_queue(32 * EVENTS_EVENT_SIZE);
-EventQueue queue(32 * EVENTS_EVENT_SIZE);                               // for uLCD display
 Thread gesture_thread;
+EventQueue angle_detection_queue(32 * EVENTS_EVENT_SIZE);
 Thread angle_detection_thread;
-Thread thread;                                                          // for uLCD display
-// for MQTT
-Thread mqtt_thread(osPriorityHigh);
+EventQueue queue(32 * EVENTS_EVENT_SIZE);       // for uLCD display
+Thread thread;                                                          
+Thread mqtt_thread(osPriorityHigh);             // for MQTT
 EventQueue mqtt_queue;
 
 
 // for MQTT
 // GLOBAL VARIABLES
 WiFiInterface *wifi;
-//WiFiInterface *wifi2;
 volatile int message_num = 0;
 volatile int arrivedcount = 0;
 volatile bool closed = false;
 
-//int ret;
-
 const char* topic1 = "Angle selection";
 const char* topic2 = "Angle detection";
 
-// for Gesture_UI mode
 int angle = 15;
 int angle_sel = 15;
 double angle_det = 0.0;
 
-int num = 0;
-// num 0: nothing
-// num 1: Gesture_UI mode
-// num 2: Angle_Detection mode
+int num = 0;                                    // num 0: nothing
+                                                // num 1: Gesture_UI mode
+                                                // num 2: Angle_Detection mode
+
 
 
 /*BELOW: MQTT function*/
@@ -122,12 +117,7 @@ void publish_message1(MQTT::Client<MQTTNetwork, Countdown>* client1) {
     MQTT::Message message;
     char buff[100];
     
-    sprintf(buff, "Angle Selected: %d", angle_sel);
-    // if (num==1) {
-    //     sprintf(buff, "Angle Selected: %d", angle_sel);
-    // } else if (num==2) {
-    //     sprintf(buff, "Angle Detected: %f, which is bigger than Angle Selected: %d", angle_det, angle_sel);
-    // }
+    sprintf(buff, "Angle Selected: %d degree", angle_sel);
 
     message.qos = MQTT::QOS0;
     message.retained = false;
@@ -136,11 +126,6 @@ void publish_message1(MQTT::Client<MQTTNetwork, Countdown>* client1) {
     message.payloadlen = strlen(buff) + 1;
     int rc = client1->publish(topic1, message);
 
-    // if (num==1) {
-    //     rc = client1->publish(topic1, message);
-    // } else if (num==2) {
-    //     rc = client2->publish(topic2, message);
-    // }
     printf("rc:  %d\r\n", rc);
     printf("Puslish message: %s\r\n", buff);
 }
@@ -152,13 +137,7 @@ void publish_message2(MQTT::Client<MQTTNetwork, Countdown>* client2) {
     MQTT::Message message;
     char buff[300];
     
-    sprintf(buff, "Angle Detected: %f, which is bigger than Angle Selected: %d", angle_det, angle_sel);
-    // if (num==1) {
-    //     sprintf(buff, "Angle Selected: %d", angle_sel);
-    // } else if (num==2) {
-    //     sprintf(buff, "Angle Detected: %f, which is bigger than Angle Selected: %d", angle_det, angle_sel);
-    // }
-
+    sprintf(buff, "Angle Detected: %.2f degree, which is bigger than the selected angle: %d degree", angle_det, angle_sel);
     
     message.qos = MQTT::QOS0;
     message.retained = false;
@@ -167,11 +146,6 @@ void publish_message2(MQTT::Client<MQTTNetwork, Countdown>* client2) {
     message.payloadlen = strlen(buff) + 1;
     int rc = client2->publish(topic2, message);
 
-    // if (num==1) {
-    //     rc = client1->publish(topic1, message);
-    // } else if (num==2) {
-    //     rc = client2->publish(topic2, message);
-    // }
     printf("rc:  %d\r\n", rc);
     printf("Puslish message: %s\r\n", buff);
 }
@@ -182,6 +156,11 @@ void close_mqtt() {
 /*************************************************************************************/
 /*************************************************************************************/
 /*Above: MQTT function*/
+
+
+
+
+
 
 
 
@@ -240,7 +219,17 @@ int PredictGesture(float* output) {
 /*Above: Machine Learning on mbed*/
 
 
-// for display on uLCD
+
+
+
+
+
+
+
+
+/*BELOW: display function on uLCD*/
+/*************************************************************************************/
+/*************************************************************************************/
 void print_angle() {
     uLCD.cls();
     uLCD.color(BLACK);
@@ -270,33 +259,26 @@ void print_angle_detect() {
     uLCD.cls();
     uLCD.color(BLACK);
     uLCD.locate(1, 2);
-    uLCD.printf("\n%f degree\n", angle_det);    
-    // uLCD.locate(1, 4);
-    // uLCD.printf("\n45\n");
-    // uLCD.locate(1, 6);
-    // uLCD.printf("\n60\n");
-    
-
-    // if (angle==15) {
-    //     uLCD.color(RED);
-    //     uLCD.locate(1, 2);
-    //     uLCD.printf("\n15\n");
-    // } else if (angle==45) {
-    //     uLCD.color(RED);
-    //     uLCD.locate(1, 4);
-    //     uLCD.printf("\n45\n");
-    // } else if (angle==60) {
-    //     uLCD.color(RED);
-    //     uLCD.locate(1, 6);
-    //     uLCD.printf("\n60\n");
-    // } 
+    uLCD.printf("\n%.2f degree\n", angle_det);    
 }
+/*************************************************************************************/
+/*************************************************************************************/
+/*Above: display function on uLCD*/
 
 
 
 
-void C_Gesture_UI(Arguments *in, Reply *out) {
-    printf("\renter C_Gesture_UI\r\n");
+
+
+
+
+
+
+/*BELOW: RPC and thread function*/
+/*************************************************************************************/
+/*************************************************************************************/
+void Leave_Mode(Arguments *in, Reply *out) {
+    printf("\r\nSuccessfully leave the mode\r\n");
     num = 0;
 }
 
@@ -312,6 +294,7 @@ void Gesture_UI(Arguments *in, Reply *out) {
     gesture_thread.start(callback(&gesture_queue, &EventQueue::dispatch_forever));
     gesture_queue.call(gesture_ui);
 }
+
 
 void gesture_ui() {
     num = 1;
@@ -391,8 +374,8 @@ void gesture_ui() {
     /*Above: Machine Learning on mbed*/
 
     ;
-    // num 1: Gesture_UI mode
-    while (num==1) {
+    
+    while (num==1) {                                                                // num 1: Gesture_UI mode
 
         // Attempt to read new data from the accelerometer
         got_data = ReadAccelerometer(error_reporter, model_input->data.f,
@@ -440,10 +423,6 @@ void gesture_ui() {
 
 
 
-
-
-
-
 void Angle_Detection(Arguments *in, Reply *out) {
     for (int i=0; i<5; i++) {
         myled2 = 1;                            // use LED2 to indicate the start of angle_detec mode
@@ -455,23 +434,8 @@ void Angle_Detection(Arguments *in, Reply *out) {
     angle_detection_queue.call(angle_detection);
 }
 
+
 void angle_detection() {
-    
-    
-
-
-    // wifi = WiFiInterface::get_default_instance();
-    // if (!wifi) {
-    //         printf("ERROR: No WiFiInterface found.\r\n");
-    //         //return -1;
-    // }
-
-    // printf("\nConnecting to %s...\r\n", MBED_CONF_APP_WIFI_SSID);
-    // ret = wifi->connect(MBED_CONF_APP_WIFI_SSID, MBED_CONF_APP_WIFI_PASSWORD, NSAPI_SECURITY_WPA_WPA2);
-    // if (ret != 0) {
-    //         printf("\nConnection error: %d\r\n", ret);
-    //         //return -1;
-    // }
     
     NetworkInterface* net = wifi;
     MQTTNetwork mqttNetwork(net);
@@ -513,9 +477,7 @@ void angle_detection() {
     double mag_B;
     double cos;
     double rad_det;
-    //double angle_det;
-    //int idR[32] = {0};
-    //int indexR = 0;
+ 
     printf("enter angle detection mode\r\n");
     printf("Place the mbed on table after LEDs\r\n");
     ThisThread::sleep_for(2000ms);
@@ -532,13 +494,13 @@ void angle_detection() {
     printf("Tilt the mbed after LEDs\r\n");
     ThisThread::sleep_for(2000ms);
     for (int i=0; i<5; i++) {
-        myled3 = 1;                            // use LED3 to show the initialization process
+        myled3 = 1;                            // use LED3 to indicate for a user to tilt the mBed
         ThisThread::sleep_for(100ms);
         myled3 = 0;
         ThisThread::sleep_for(100ms);
     }
     
-    num = 2;            // tile Angle_Detection mode
+    num = 2;                                    // tilt Angle_Detection mode
     while (num==2) {
         BSP_ACCELERO_AccGetXYZ(pDataXYZ);
         printf("Angle Detection: %d %d %d\r\n",pDataXYZ[0], pDataXYZ[1], pDataXYZ[2]);
@@ -547,9 +509,8 @@ void angle_detection() {
         cos = ((pDataXYZ_init[0]*pDataXYZ[0] + pDataXYZ_init[1]*pDataXYZ[1] + pDataXYZ_init[2]*pDataXYZ[2])/(mag_A)/(mag_B));
         rad_det = acos(cos);
         angle_det = 180.0 * rad_det/PI;
-        printf("angle_det = %f\r\n", angle_det);
+        printf("angle_det = %.2f\r\n", angle_det);
         queue.call(print_angle_detect);
-        // queue.call(another print function for uLCD)
 
         if (angle_det > angle_sel) {
             mqtt_queue.call(&publish_message2, &client2);
@@ -557,15 +518,21 @@ void angle_detection() {
         ThisThread::sleep_for(1000ms);
     }
 }
+/*************************************************************************************/
+/*************************************************************************************/
+/*Above: RPC and thread function*/
 
 
 
 
-//double x, y;
+
+
+
+
+
 
 int main() {
-    // display on uLCD
-    uLCD.background_color(WHITE);               
+    uLCD.background_color(WHITE);                                                           // initial display on uLCD
     uLCD.cls();
     uLCD.textbackground_color(WHITE);
     uLCD.color(RED);
@@ -576,10 +543,13 @@ int main() {
     uLCD.printf("\n45\n");
     uLCD.locate(1, 6);
     uLCD.printf("\n60\n");
-    
+
 
     thread.start(callback(&queue, &EventQueue::dispatch_forever));                          // for output on uLCD
     mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
+
+
+
 
 
     /*BELOW: MQTT*/
@@ -635,9 +605,16 @@ int main() {
     /*************************************************************************************/
     /*Above: MQTT*/
 
+
+
+
+
     printf("Start accelerometer init\n");
     BSP_ACCELERO_Init();
     btn.rise(mqtt_queue.event(&publish_message1, &client1));
+
+
+
 
 
     //The mbed RPC classes are now wrapped to create an RPC enabled version - see RpcClasses.h so don't add to base class
@@ -663,6 +640,9 @@ int main() {
     }
 
 
+
+
+
     int num = 0;
     while (num != 5) {
             client1.yield(100);
@@ -680,9 +660,7 @@ int main() {
     if ((rc = client1.unsubscribe(topic1)) != 0) {
             printf("Failed: rc from unsubscribe was %d\n", rc);
     }
-    // if ((rc = client2.unsubscribe(topic2)) != 0) {
-    //         printf("Failed: rc from unsubscribe was %d\n", rc);
-    // }
+
     if ((rc = client1.disconnect()) != 0) {
     printf("Failed: rc from disconnect was %d\n", rc);
     }
@@ -690,28 +668,3 @@ int main() {
     mqttNetwork.disconnect();
     printf("Successfully closed!\n");
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
